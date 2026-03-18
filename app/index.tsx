@@ -13,8 +13,8 @@ export default function IndexScreen() {
 
   const checkAuthAndOnboarding = useCallback(async () => {
     try {
-      // Check if user is authenticated
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { session } } = await supabase.auth.getSession();
+      const user = session?.user;
 
       if (!user) {
         logStartup('auth: no active user, redirecting to /auth/email');
@@ -23,28 +23,27 @@ export default function IndexScreen() {
         return;
       }
 
-      // User is authenticated, check if profile exists
-      const { data: profile, error } = await supabase
-        .from('user_profiles')
-        .select('username')
-        .eq('id', user.id)
-        .single();
+      const [{ data: profile, error: profileError }, { data: ratings, error: ratingsError }] = await Promise.all([
+        supabase
+          .from('user_profiles')
+          .select('username')
+          .eq('id', user.id)
+          .single(),
+        supabase
+          .from('user_ratings')
+          .select('id')
+          .eq('user_id', user.id)
+          .limit(1),
+      ]);
 
-      if (error || !profile?.username) {
+      if (profileError || !profile?.username) {
         logStartup('auth: profile incomplete, redirecting to /onboarding');
         // Profile incomplete -> continue onboarding
         router.replace('/onboarding');
         return;
       }
 
-      // Check if user has completed sport selection (has ratings)
-      const { data: ratings } = await supabase
-        .from('user_ratings')
-        .select('id')
-        .eq('user_id', user.id)
-        .limit(1);
-
-      if (!ratings || ratings.length === 0) {
+      if (ratingsError || !ratings || ratings.length === 0) {
         logStartup('auth: no ratings, redirecting to /onboarding');
         // No sports/ratings set -> continue onboarding
         router.replace('/onboarding');

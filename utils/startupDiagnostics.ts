@@ -25,8 +25,10 @@ function pushEntry(message: string, level: 'info' | 'error') {
 
   entries = [...entries.slice(-39), entry];
 
-  const tag = level === 'error' ? 'error' : 'log';
-  console[tag](`[startup] ${message}`);
+  if (__DEV__) {
+    const tag = level === 'error' ? 'error' : 'log';
+    console[tag](`[startup] ${message}`);
+  }
   emit();
 }
 

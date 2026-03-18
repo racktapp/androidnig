@@ -3,7 +3,7 @@ import { ActivityIndicator, DevSettings, StyleSheet, Text, View } from 'react-na
 import { Stack, type ErrorBoundaryProps } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AlertProvider } from '@/template';
-import { initAdMob } from '@/utils/admob';
+import { initAdMob } from '@/utils/admob.native';
 import { Colors } from '@/constants/theme';
 import { StartupErrorScreen } from '@/components/StartupErrorScreen';
 import { logStartup, logStartupError } from '@/utils/startupDiagnostics';
@@ -47,8 +47,14 @@ export default function RootLayout() {
       logStartup('app start');
       logStartup('fonts: using bundled defaults');
 
-      await initAdMob();
-      logStartup('ads init complete (or safely skipped)');
+      void initAdMob()
+        .then(() => {
+          logStartup('ads init complete (or safely skipped)');
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : 'Unknown AdMob init error';
+          logStartupError(`ads init failed after boot: ${message}`);
+        });
 
       logStartup('router ready');
       setBootState('ready');

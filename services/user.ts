@@ -55,27 +55,30 @@ export const userService = {
   },
 
   async getFeed(userId: string, limit = 20) {
-    const { data: memberships } = await supabase
-      .from('group_members')
-      .select('group_id')
-      .eq('user_id', userId);
+    const [{ data: memberships }, { data: friendships }] = await Promise.all([
+      supabase
+        .from('group_members')
+        .select('group_id')
+        .eq('user_id', userId),
+      supabase
+        .from('friendships')
+        .select('friend_id')
+        .eq('user_id', userId),
+    ]);
 
-    const groupIds = (memberships || []).map((m: any) => m.group_id);
+    const groupIds = (memberships || []).map((membership: any) => membership.group_id);
+    const friendIds = (friendships || []).map((friendship: any) => friendship.friend_id);
 
-    if (groupIds.length === 0) {
+    if (groupIds.length === 0 && friendIds.length === 0) {
       return [];
     }
 
-    const { data: friendships } = await supabase
-      .from('friendships')
-      .select('friend_id')
-      .eq('user_id', userId);
-
-    const friendIds = (friendships || []).map((f: any) => f.friend_id);
-
-    let filterQuery = `group_id.in.(${groupIds.join(',')})`;
+    const filters = [];
+    if (groupIds.length > 0) {
+      filters.push(`group_id.in.(${groupIds.join(',')})`);
+    }
     if (friendIds.length > 0) {
-      filterQuery += `,user_id.in.(${friendIds.join(',')})`;
+      filters.push(`user_id.in.(${friendIds.join(',')})`);
     }
 
     const { data, error } = await supabase
@@ -96,7 +99,7 @@ export const userService = {
           players:match_players(user:user_id(id, username, display_name, initials, avatar_url), team)
         )
       `)
-      .or(filterQuery)
+      .or(filters.join(','))
       .order('created_at', { ascending: false })
       .limit(limit);
 

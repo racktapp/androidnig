@@ -3,7 +3,6 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import 'react-native-url-polyfill/auto';
-import { SupabaseConfig } from './types';
 
 class SupabaseManager {
   private static instance: SupabaseClient | null = null;
@@ -24,7 +23,7 @@ class SupabaseManager {
     this.creationCount++;
     
     try {
-      console.log(`[Template:Client] Creating Supabase client instance #${this.creationCount}`);
+      debugLog(`[Template:Client] Creating Supabase client instance #${this.creationCount}`);
       
       const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
       const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -37,8 +36,8 @@ class SupabaseManager {
       }
       
       if (this.creationCount > 1) {
-        console.warn(`[Template:Client] ⚠️ Multiple client creation detected! This is creation #${this.creationCount}`);
-        console.warn('[Template:Client] This may indicate a development environment hot reload or architecture issue.');
+        debugWarn(`[Template:Client] ⚠️ Multiple client creation detected! This is creation #${this.creationCount}`);
+        debugWarn('[Template:Client] This may indicate a development environment hot reload or architecture issue.');
       }
       
       this.instance = createClient(supabaseUrl, supabaseAnonKey, {
@@ -51,7 +50,7 @@ class SupabaseManager {
         },
       });
       
-      console.log('[Template:Client] Supabase client created successfully');
+      debugLog('[Template:Client] Supabase client created successfully');
       return this.instance;
       
     } finally {
@@ -89,6 +88,18 @@ class SupabaseManager {
   }
 }
 
+function debugLog(message: string) {
+  if (__DEV__) {
+    console.log(message);
+  }
+}
+
+function debugWarn(message: string) {
+  if (__DEV__) {
+    console.warn(message);
+  }
+}
+
 export const getSharedSupabaseClient = (): SupabaseClient => {
   return SupabaseManager.getClient();
 };
@@ -99,4 +110,3 @@ export const safeSupabaseOperation = async <T>(
   const client = getSharedSupabaseClient();
   return await operation(client);
 };
-
