@@ -5,12 +5,11 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Colors, Typography, BorderRadius, Spacing } from '@/constants/theme';
-import { ScreenLoader, EmptyState, ErrorState, Avatar } from '@/components';
+import { ScreenLoader, EmptyState, ErrorState } from '@/components';
 import { getSupabaseClient } from '@/template';
-import { userService } from '@/services/user';
 import { tournamentsService } from '@/services/tournaments';
 import { Tournament } from '@/types';
-import { normalizeMatchSets, calculateSetsWon } from '@/services/matchUtils';
+import { normalizeMatchSets } from '@/services/matchUtils';
 import TournamentsHome from '../tournaments/index';
 
 const supabase = getSupabaseClient();
@@ -24,8 +23,6 @@ export default function DashboardScreen() {
   const [userId, setUserId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [unreadFeedCount, setUnreadFeedCount] = useState<number>(0);
-  const [events, setEvents] = useState<any[]>([]);
-  const [pendingMatches, setPendingMatches] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [lastActiveGroup, setLastActiveGroup] = useState<any>(null);
   const [recentResults, setRecentResults] = useState<any[]>([]);
@@ -36,50 +33,12 @@ export default function DashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadUserId();
-  }, []);
-
-  useEffect(() => {
-    if (userId) {
-      loadInitialData();
-    }
-  }, [userId, activeTab]);
-
-  const loadUserId = async () => {
+  const loadUserId = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     setUserId(user?.id || null);
-  };
+  }, []);
 
-  const loadInitialData = async () => {
-    try {
-      setError(null);
-      await loadOverviewData();
-      // Load unread count for bell badge
-      if (userId) {
-        const pending = await loadPendingMatchesCount();
-        setUnreadFeedCount(pending);
-      }
-    } catch (err: any) {
-      console.error('Error loading dashboard:', err);
-      setError(err.message || 'Failed to load dashboard');
-    } finally {
-      setIsLoadingInitial(false);
-    }
-  };
-
-  const loadFeed = async () => {
-    if (!userId) return;
-    try {
-      const data = await userService.getFeed(userId);
-      setEvents(data);
-    } catch (err) {
-      console.error('Error loading feed:', err);
-    }
-  };
-
-  const loadPendingMatchesCount = async (): Promise<number> => {
-    if (!userId) return 0;
+  const loadPendingMatchesCount = useCallback(async (currentUserId: string): Promise<void> => {
     try {
       const { data: matchPlayers } = await supabase
         .from('match_players')
@@ -90,21 +49,20 @@ export default function DashboardScreen() {
             created_by
           )
         `)
-        .eq('user_id', userId);
+        .eq('user_id', currentUserId);
 
       const pending = (matchPlayers || [])
         .map((mp: any) => mp.match)
-        .filter((m: any) => m && m.status === 'pending' && m.created_by !== userId);
+        .filter((m: any) => m && m.status === 'pending' && m.created_by !== currentUserId);
 
-      return pending.length;
+      setUnreadFeedCount(pending.length);
     } catch (err) {
       console.error('Error loading pending matches count:', err);
-      return 0;
+      setUnreadFeedCount(0);
     }
-  };
+  }, []);
 
-  const loadOverviewData = async () => {
-    if (!userId) return;
+  const loadOverviewData = useCallback(async (currentUserId: string) => {
     try {
       // Get this month's stats
       const now = new Date();
@@ -112,8 +70,20 @@ export default function DashboardScreen() {
 
       const { data: matchPlayers } = await supabase
         .from('match_players')
-        .select('match_id, team, match:match_id(id, winner_team, status, type, created_at, group_id)')
-        .eq('user_id', userId);
+        .select(`
+          match_id,
+          team,
+          match:match_id(
+            id,
+            winner_team,
+            status,
+            type,
+            sport,
+            created_at,
+            group:group_id(id, name)
+          )
+        `)
+        .eq('user_id', currentUserId);
 
       const thisMonthMatches = (matchPlayers || [])
         .filter((mp: any) => 
@@ -134,14 +104,13 @@ export default function DashboardScreen() {
 
       // Get last active group
       if (thisMonthMatches.length > 0) {
-        const lastMatch = thisMonthMatches[thisMonthMatches.length - 1];
-        const { data: group } = await supabase
-          .from('groups')
-          .select('id, name')
-          .eq('id', lastMatch.match.group_id)
-          .single();
-
-        setLastActiveGroup(group);
+        const sortedThisMonthMatches = [...thisMonthMatches].sort((a: any, b: any) =>
+          new Date(b.match.created_at).getTime() - new Date(a.match.created_at).getTime()
+        );
+        const latestGroup = sortedThisMonthMatches[0]?.match?.group;
+        setLastActiveGroup(Array.isArray(latestGroup) ? latestGroup[0] ?? null : latestGroup ?? null);
+      } else {
+        setLastActiveGroup(null);
       }
 
       // Get recent competitive results (last 3)
@@ -152,216 +121,93 @@ export default function DashboardScreen() {
         )
         .slice(0, 3);
 
-      const resultsWithDetails = await Promise.all(
-        recentMatches.map(async (mp: any) => {
-          const { data: match } = await supabase
-            .from('matches')
-            .select(`
-              id,
-              sport,
-              winner_team,
-              match_players(user_id, team, user:user_id(username, display_name)),
-              match_sets(set_number, team_a_score, team_b_score)
-            `)
-            .eq('id', mp.match_id)
-            .single();
+      if (recentMatches.length === 0) {
+        setRecentResults([]);
+      } else {
+        const recentMatchIds = recentMatches.map((mp: any) => mp.match_id);
+        const { data: recentMatchDetails } = await supabase
+          .from('matches')
+          .select(`
+            id,
+            sport,
+            winner_team,
+            match_players(user_id, team, user:user_id(username, display_name)),
+            match_sets(set_number, team_a_score, team_b_score)
+          `)
+          .in('id', recentMatchIds);
 
-          if (!match) return null;
+        const detailsById = new Map((recentMatchDetails || []).map((match: any) => [match.id, match]));
 
-          const opponentPlayer = match.match_players.find((p: any) => p.user_id !== userId);
-          const won = mp.team === match.winner_team;
-          const sets = normalizeMatchSets(match);
-          const scoreDisplay = sets.map(s => `${s.a}–${s.b}`).join(' ');
+        setRecentResults(
+          recentMatches
+            .map((mp: any) => {
+              const match = detailsById.get(mp.match_id);
+              if (!match) return null;
 
-          return {
-            id: match.id,
-            won,
-            opponent: opponentPlayer?.user?.display_name || opponentPlayer?.user?.username || 'Unknown',
-            score: scoreDisplay,
-            sport: match.sport,
-          };
-        })
-      );
+              const opponentPlayer = match.match_players.find((player: any) => player.user_id !== currentUserId);
+              const won = mp.team === match.winner_team;
+              const sets = normalizeMatchSets(match);
 
-      setRecentResults(resultsWithDetails.filter(Boolean));
+              return {
+                id: match.id,
+                won,
+                opponent: opponentPlayer?.user?.display_name || opponentPlayer?.user?.username || 'Unknown',
+                score: sets.map((set) => `${set.a}–${set.b}`).join(' '),
+                sport: match.sport,
+              };
+            })
+            .filter(Boolean)
+        );
+      }
 
       // Get tournament summary
-      const activeTourn = await tournamentsService.getActiveTournamentForUser(userId);
+      const activeTourn = await tournamentsService.getActiveTournamentForUser(currentUserId);
       setActiveTournament(activeTourn);
       
       if (activeTourn) {
         const progress = await tournamentsService.getTournamentProgress(activeTourn);
         setTournamentProgress(progress);
+      } else {
+        setTournamentProgress(null);
       }
 
-      const recentTourns = await tournamentsService.getRecentCompletedTournamentsForUser(userId, 3);
+      const recentTourns = await tournamentsService.getRecentCompletedTournamentsForUser(currentUserId, 3);
       setRecentTournaments(recentTourns);
 
     } catch (err) {
       console.error('Error loading overview:', err);
     }
-  };
+  }, []);
+
+  const loadInitialData = useCallback(async () => {
+    if (!userId) return;
+
+    try {
+      setError(null);
+      await Promise.all([loadOverviewData(userId), loadPendingMatchesCount(userId)]);
+    } catch (err: any) {
+      console.error('Error loading dashboard:', err);
+      setError(err.message || 'Failed to load dashboard');
+    } finally {
+      setIsLoadingInitial(false);
+    }
+  }, [loadOverviewData, loadPendingMatchesCount, userId]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadInitialData();
     setRefreshing(false);
-  }, [userId, activeTab]);
+  }, [loadInitialData]);
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
+  useEffect(() => {
+    loadUserId();
+  }, [loadUserId]);
 
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays === 0) return 'Today';
-    if (diffDays === 1) return 'Yesterday';
-    return date.toLocaleDateString();
-  };
-
-  const renderEvent = (event: any) => {
-    let icon = '📢';
-    let description = '';
-
-    const groupName = event.group?.name || event.metadata?.group_name || 'a group';
-    const userName = event.user?.display_name || event.user?.username || 'Someone';
-
-    if (!event.group?.name && event.group_id) {
-      console.warn('[Feed] Missing group name for event:', {
-        eventId: event.id,
-        eventType: event.event_type,
-        groupId: event.group_id,
-      });
+  useEffect(() => {
+    if (userId) {
+      loadInitialData();
     }
-
-    switch (event.event_type) {
-      case 'match_confirmed':
-        icon = '🎾';
-        description = `Match confirmed in ${groupName}`;
-        break;
-      case 'group_created':
-        icon = '🏆';
-        description = `${userName} created ${groupName}`;
-        break;
-      case 'group_joined':
-        icon = '👋';
-        description = `${userName} joined ${groupName}`;
-        break;
-      default:
-        icon = '📢';
-        description = 'Activity update';
-    }
-
-    return (
-      <View key={event.id} style={styles.eventCard}>
-        <Text style={styles.eventIcon}>{icon}</Text>
-        <View style={styles.eventContent}>
-          <Text style={styles.eventDescription}>{description}</Text>
-          <Text style={styles.eventTime}>{formatDate(event.created_at)}</Text>
-        </View>
-      </View>
-    );
-  };
-
-  const renderFeedTab = () => (
-    <ScrollView
-      style={styles.scrollView}
-      contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 80 }]}
-      showsVerticalScrollIndicator={false}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          tintColor={Colors.primary}
-        />
-      }
-    >
-      {/* Pending Confirmations */}
-      {pendingMatches.length > 0 && (
-        <View style={styles.pendingSection}>
-          <Text style={styles.sectionTitle}>Needs Your Confirmation</Text>
-          {pendingMatches.map((match) => {
-            const sets = normalizeMatchSets(match);
-            const { setsWonA, setsWonB } = calculateSetsWon(sets);
-            const teamAPlayers = match.players?.filter((p: any) => p.team === 'A') || [];
-            const teamBPlayers = match.players?.filter((p: any) => p.team === 'B') || [];
-
-            const getTeamName = (players: any[]) => {
-              return players
-                .map((p: any) => p.user?.display_name?.split(' ')[0] || p.user?.username || 'Player')
-                .join(' / ');
-            };
-
-            return (
-              <Pressable
-                key={match.id}
-                style={styles.pendingCard}
-                onPress={() => router.push(`/match/${match.id}`)}
-              >
-                <View style={styles.pendingHeader}>
-                  <MaterialIcons name="sports-tennis" size={20} color={Colors.primary} />
-                  <Text style={styles.pendingGroup}>{match.group?.name}</Text>
-                </View>
-
-                <View style={styles.matchupRow}>
-                  <Text style={styles.teamName} numberOfLines={1}>
-                    {getTeamName(teamAPlayers)}
-                  </Text>
-                  <Text style={styles.vsText}>vs</Text>
-                  <Text style={styles.teamName} numberOfLines={1}>
-                    {getTeamName(teamBPlayers)}
-                  </Text>
-                </View>
-
-                {sets.length > 0 && (
-                  <View style={styles.scorePreview}>
-                    {sets.map((set, idx) => (
-                      <Text key={idx} style={styles.setScore}>
-                        {set.a}–{set.b}
-                      </Text>
-                    ))}
-                    <Text style={styles.setsWon}>
-                      ({setsWonA}–{setsWonB})
-                    </Text>
-                  </View>
-                )}
-
-                <View style={styles.pendingFooter}>
-                  <View style={styles.pendingBadge}>
-                    <MaterialIcons name="schedule" size={14} color={Colors.warning} />
-                    <Text style={styles.pendingBadgeText}>Awaiting Confirmation</Text>
-                  </View>
-                  <MaterialIcons name="chevron-right" size={20} color={Colors.textMuted} />
-                </View>
-              </Pressable>
-            );
-          })}
-        </View>
-      )}
-
-      {/* Activity Feed */}
-      {events.length === 0 && pendingMatches.length === 0 ? (
-        <EmptyState
-          icon="📡"
-          title="No Activity Yet"
-          subtitle="Add friends and join groups to see activity"
-        />
-      ) : events.length > 0 ? (
-        <View style={styles.eventsSection}>
-          {pendingMatches.length > 0 && (
-            <Text style={styles.sectionTitle}>Recent Activity</Text>
-          )}
-          <View style={styles.eventsList}>
-            {events.map(renderEvent)}
-          </View>
-        </View>
-      ) : null}
-    </ScrollView>
-  );
+  }, [loadInitialData, userId]);
 
   const renderOverviewTab = () => (
     <ScrollView
