@@ -310,8 +310,6 @@ const styles = StyleSheet.create({
     gap: Spacing.lg,
   },
   bannerContainer: {
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
     paddingTop: Spacing.sm,
     backgroundColor: Colors.background,
   },
