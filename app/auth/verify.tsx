@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, KeyboardAvoidingView, Platform, Pressable } fro
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Button, Input } from '@/components';
-import { Colors, Typography, BorderRadius, Spacing } from '@/constants/theme';
+import { Colors, Typography, Spacing } from '@/constants/theme';
 import { getSupabaseClient } from '@/template';
 
 const supabase = getSupabaseClient();
@@ -66,18 +66,24 @@ export default function VerifyCodeScreen() {
         return;
       }
 
-      // Check if user profile exists
-      const { data: profile } = await supabase
-        .from('user_profiles')
-        .select('username')
-        .eq('id', data.user.id)
-        .single();
+      const [{ data: profile }, { data: ratings }] = await Promise.all([
+        supabase
+          .from('user_profiles')
+          .select('username')
+          .eq('id', data.user.id)
+          .single(),
+        supabase
+          .from('user_ratings')
+          .select('id')
+          .eq('user_id', data.user.id)
+          .limit(1),
+      ]);
 
-      if (profile?.username) {
-        // Profile exists, go to main app
-        router.replace('/(tabs)');
+      const hasCompletedOnboarding = Boolean(profile?.username) && Boolean(ratings?.length);
+
+      if (hasCompletedOnboarding) {
+        router.replace('/(tabs)/dashboard');
       } else {
-        // New user, go to onboarding
         router.replace('/onboarding');
       }
     } catch (err: any) {
