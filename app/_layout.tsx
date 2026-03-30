@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, DevSettings, StyleSheet, Text, View } from 'react-native';
+import { DevSettings, Image, StyleSheet, View } from 'react-native';
 import { Stack, type ErrorBoundaryProps } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AlertProvider } from '@/template';
@@ -11,8 +11,7 @@ import { logStartup, logStartupError } from '@/utils/startupDiagnostics';
 function LoadingScreen() {
   return (
     <View style={styles.loadingContainer}>
-      <ActivityIndicator size="large" color={Colors.primary} />
-      <Text style={styles.loadingText}>Loading…</Text>
+      <Image source={require('@/assets/images/logo.png')} style={styles.loadingLogo} resizeMode="contain" />
     </View>
   );
 }
@@ -126,13 +125,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: Colors.background,
-    gap: 10,
-    padding: 16,
+    padding: 24,
   },
-  loadingText: {
-    color: Colors.textPrimary,
-    fontSize: 16,
-    fontWeight: '600',
+  loadingLogo: {
+    width: 220,
+    height: 220,
   },
   errorContainer: {
     flex: 1,
